@@ -255,7 +255,7 @@ static const char usage[] =
 	"\n";
 
 int main(int argc, char **argv) {
-	static bool verbose = false, debug = false, validate = false, allow_unsupported_gpu = false;
+	static bool verbose = false, debug = false, validate = false, allow_unsupported_gpu = true;
 
 	char *config_path = NULL;
 

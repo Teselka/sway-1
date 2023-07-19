@@ -64,6 +64,19 @@ struct sway_container_state {
 	double content_width, content_height;
 };
 
+struct sway_container_button {
+	struct wl_listener press;
+	struct wl_listener hover;
+
+	bool hovered;
+
+	float rect_color[4];
+
+	// Can be NULL, colored rect will be rendered instead
+	struct wlr_texture* hovered_texture;
+	struct wlr_texture* focused_texture;
+};
+
 struct sway_container {
 	struct sway_node node;
 	struct sway_view *view;
@@ -73,6 +86,8 @@ struct sway_container {
 
 	char *title;           // The view's title (unformatted)
 	char *formatted_title; // The title displayed in the title bar
+
+	list_t* buttons; // struct sway_container_button
 
 	enum sway_container_layout prev_split_layout;
 
@@ -357,6 +372,8 @@ bool container_has_mark(struct sway_container *container, char *mark);
 void container_add_mark(struct sway_container *container, char *mark);
 
 void container_update_marks_textures(struct sway_container *container);
+
+void container_update_buttons_textures(struct sway_container *container);
 
 void container_raise_floating(struct sway_container *con);
 

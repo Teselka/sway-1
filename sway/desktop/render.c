@@ -457,20 +457,104 @@ static void render_titlebar(struct render_context *ctx, struct sway_container *c
 
 	// output-buffer local
 	int ob_inner_x = roundf(inner_x * output_scale);
+	int ob_inner_y = roundf(bg_y * output_scale);
 	int ob_inner_width = scale_length(inner_width, inner_x, output_scale);
 	int ob_bg_height = scale_length(
 			(titlebar_v_padding - titlebar_border_thickness) * 2 +
 			config->font_height, bg_y, output_scale);
+	
+	// Buttons
+	int ob_marks_buttons_x = 0;
+	int ob_marks_buttons_width = 0;
+	if (config->show_buttons) {
+		int buttons_height = roundf(ob_bg_height * config->buttons_scale);
+		int buttons_y = ob_inner_y + roundf((ob_bg_height - buttons_height) / 2.0);
+		int buttons_padding = roundf(config->buttons_padding * output_scale);
+
+		for (int i = 0; i < con->buttons->length; i++) {
+			struct sway_container_button* button = (struct sway_container_button*)con->buttons->items[i];
+
+			struct wlr_box texture_box;
+			struct wlr_texture* texture;
+			if (button->hovered) {
+				texture = button->hovered_texture;
+			} else {
+				texture = button->focused_texture;
+			}
+
+			if (texture) {
+				texture_box.width = texture->width;
+				texture_box.height = texture->height;
+			} else {
+				texture_box.width = buttons_height;
+				texture_box.height = buttons_height;
+			}
+
+			if (title_align == ALIGN_RIGHT) {
+				texture_box.x = ob_inner_x + ob_marks_buttons_width;
+				if (ob_marks_buttons_x == 0) {
+					ob_marks_buttons_x = texture_box.x;
+				}
+			} else {
+				texture_box.x = ob_inner_x + ob_inner_width - ob_marks_buttons_width - texture_box.width;
+				ob_marks_buttons_x = texture_box.x;
+			}
+
+			ob_marks_buttons_width += texture_box.width + buttons_padding;
+
+			texture_box.x += round(output_x * output_scale);
+			texture_box.y = buttons_y;
+
+			struct wlr_box clip_box = texture_box;
+			if (ob_inner_width < clip_box.width) {
+				clip_box.width = ob_inner_width;
+			}
+
+			memcpy(&color, button->rect_color, sizeof(float) * 4);
+			premultiply_alpha(color, con->alpha);
+			if (texture) {
+				render_texture(ctx, texture,
+					NULL, &texture_box, &clip_box, WL_OUTPUT_TRANSFORM_NORMAL, con->alpha);
+			} else {
+				render_rect(ctx, &clip_box, color);
+			}
+
+			int ob_padding_height = ob_bg_height - texture_box.height;
+			int ob_padding_above = floor(ob_padding_height / 2.0);
+			int ob_padding_below = ceil(ob_padding_height / 2.0);
+			
+			// Padding above
+			memcpy(&color, colors->background, sizeof(float) * 4);
+			premultiply_alpha(color, con->alpha);
+			box.x = clip_box.x;
+			box.y = ob_inner_y;
+			box.width = clip_box.width;
+			box.height = ob_padding_above;
+			render_rect(ctx, &box, color);
+
+			// Padding below
+			box.y += ob_padding_above + clip_box.height;
+			box.height = ob_padding_below;
+			render_rect(ctx, &box, color);
+
+			// Padding between
+			if ((title_align == ALIGN_LEFT && i != 0) || title_align != ALIGN_LEFT) {
+				box.x = clip_box.x + clip_box.width;
+				box.y = ob_inner_y;
+				box.width = buttons_padding;
+				box.height = ob_bg_height;
+				render_rect(ctx, &box, color);
+			}
+		}
+	}
 
 	// Marks
-	int ob_marks_x = 0; // output-buffer-local
-	int ob_marks_width = 0; // output-buffer-local
 	if (config->show_marks && marks_texture) {
 		struct wlr_box texture_box = {
 			.width = marks_texture->width,
 			.height = marks_texture->height,
 		};
-		ob_marks_width = texture_box.width;
+		ob_marks_buttons_width += texture_box.width;
 
 		// The marks texture might be shorter than the config->font_height, in
 		// which case we need to pad it as evenly as possible above and below.
@@ -481,11 +565,17 @@ static void render_titlebar(struct render_context *ctx, struct sway_container *c
 		// Render texture. If the title is on the right, the marks will be on
 		// the left. Otherwise, they will be on the right.
 		if (title_align == ALIGN_RIGHT || texture_box.width > ob_inner_width) {
-			texture_box.x = ob_inner_x;
+			if (ob_marks_buttons_x != 0) {
+				texture_box.x = ob_marks_buttons_x + ob_marks_buttons_width;
+			} else {
+				texture_box.x = ob_inner_x;
+			}
 		} else {
-			texture_box.x = ob_inner_x + ob_inner_width - texture_box.width;
+			if (ob_marks_buttons_x != 0) {
+				texture_box.x = texture_box.x - ob_marks_buttons_width;
+			}
 		}
-		ob_marks_x = texture_box.x;
+		ob_marks_buttons_x = texture_box.x;
 
 		texture_box.y = round((bg_y - output_y) * output_scale) +
 			ob_padding_above;
@@ -501,7 +591,7 @@ static void render_titlebar(struct render_context *ctx, struct sway_container *c
 		memcpy(&color, colors->background, sizeof(float) * 4);
 		premultiply_alpha(color, con->alpha);
 		box.x = clip_box.x + round(output_x * output_scale);
-		box.y = roundf((y + titlebar_border_thickness) * output_scale);
+		box.y = ob_inner_y;
 		box.width = clip_box.width;
 		box.height = ob_padding_above;
 		render_rect(ctx, &box, color);
@@ -538,16 +628,16 @@ static void render_titlebar(struct render_context *ctx, struct sway_container *c
 			texture_box.height;
 
 		// Render texture
-		if (texture_box.width > ob_inner_width - ob_marks_width) {
-			texture_box.x = (title_align == ALIGN_RIGHT && ob_marks_width)
-				? ob_marks_x + ob_marks_width : ob_inner_x;
+		if (texture_box.width > ob_inner_width - ob_marks_buttons_width) {
+			texture_box.x = (title_align == ALIGN_RIGHT && ob_marks_buttons_width)
+				? ob_marks_buttons_x + ob_marks_buttons_width : ob_inner_x;
 		} else if (title_align == ALIGN_LEFT) {
 			texture_box.x = ob_inner_x;
 		} else if (title_align == ALIGN_CENTER) {
 			// If there are marks visible, center between the edge and marks.
 			// Otherwise, center in the inner area.
-			if (ob_marks_width) {
-				texture_box.x = (ob_inner_x + ob_marks_x) / 2
+			if (ob_marks_buttons_width) {
+				texture_box.x = (ob_inner_x + ob_marks_buttons_x) / 2
 					- texture_box.width / 2;
 			} else {
 				texture_box.x = ob_inner_x + ob_inner_width / 2
@@ -562,8 +652,8 @@ static void render_titlebar(struct render_context *ctx, struct sway_container *c
 			round((bg_y - output_y) * output_scale) + ob_padding_above;
 
 		struct wlr_box clip_box = texture_box;
-		if (ob_inner_width - ob_marks_width < clip_box.width) {
-			clip_box.width = ob_inner_width - ob_marks_width;
+		if (ob_inner_width - ob_marks_buttons_width < clip_box.width) {
+			clip_box.width = ob_inner_width - ob_marks_buttons_width;
 		}
 
 		render_texture(ctx, title_texture,
@@ -573,7 +663,7 @@ static void render_titlebar(struct render_context *ctx, struct sway_container *c
 		memcpy(&color, colors->background, sizeof(float) * 4);
 		premultiply_alpha(color, con->alpha);
 		box.x = clip_box.x + round(output_x * output_scale);
-		box.y = roundf((y + titlebar_border_thickness) * output_scale);
+		box.y = ob_inner_y;
 		box.width = clip_box.width;
 		box.height = ob_padding_above;
 		render_rect(ctx, &box, color);
@@ -586,19 +676,19 @@ static void render_titlebar(struct render_context *ctx, struct sway_container *c
 
 	// Determine the left + right extends of the textures (output-buffer local)
 	int ob_left_x, ob_left_width, ob_right_x, ob_right_width;
-	if (ob_title_width == 0 && ob_marks_width == 0) {
+	if (ob_title_width == 0 && ob_marks_buttons_width == 0) {
 		ob_left_x = ob_inner_x;
 		ob_left_width = 0;
 		ob_right_x = ob_inner_x;
 		ob_right_width = 0;
-	} else if (ob_title_x < ob_marks_x) {
+	} else if (ob_title_x < ob_marks_buttons_x) {
 		ob_left_x = ob_title_x;
 		ob_left_width = ob_title_width;
-		ob_right_x = ob_marks_x;
-		ob_right_width = ob_marks_width;
+		ob_right_x = ob_marks_buttons_x;
+		ob_right_width = ob_marks_buttons_width;
 	} else {
-		ob_left_x = ob_marks_x;
-		ob_left_width = ob_marks_width;
+		ob_left_x = ob_marks_buttons_x;
+		ob_left_width = ob_marks_buttons_width;
 		ob_right_x = ob_title_x;
 		ob_right_width = ob_title_width;
 	}
@@ -609,7 +699,7 @@ static void render_titlebar(struct render_context *ctx, struct sway_container *c
 		ob_right_width = ob_left_width;
 	}
 
-	// Filler between title and marks
+	// Filler between title and buttons+marks
 	box.width = ob_right_x - ob_left_x - ob_left_width;
 	if (box.width > 0) {
 		box.x = ob_left_x + ob_left_width + round(output_x * output_scale);

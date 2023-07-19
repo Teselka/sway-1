@@ -269,6 +269,9 @@ static void config_defaults(struct sway_config *config) {
 	config->failed = false;
 	config->auto_back_and_forth = false;
 	config->reading = false;
+	config->show_buttons = true;
+	config->buttons_scale = 0.8f;
+	config->buttons_padding = 2;
 	config->show_marks = true;
 	config->title_align = ALIGN_LEFT;
 	config->tiling_drag = true;

@@ -42,8 +42,23 @@ struct sway_container *container_create(struct sway_view *view) {
 		c->pending.children = create_list();
 		c->current.children = create_list();
 	}
+	c->buttons = create_list();
 	c->marks = create_list();
 	c->outputs = create_list();
+
+	struct sway_container_button* button = calloc(1, sizeof(struct sway_container_button));
+	button->rect_color[0] = 1.f;
+	button->rect_color[1] = 1.f;
+	button->rect_color[2] = 1.f;
+	button->rect_color[3] = 1.f;
+	list_add(c->buttons, (void*)button);
+
+	button = calloc(1, sizeof(struct sway_container_button));
+	button->rect_color[0] = 1.f;
+	button->rect_color[1] = 0.f;
+	button->rect_color[2] = 1.f;
+	button->rect_color[3] = 1.f;
+	list_add(c->buttons, (void*)button);
 
 	wl_signal_init(&c->events.destroy);
 	wl_signal_emit_mutable(&root->events.new_node, &c->node);
@@ -77,6 +92,11 @@ void container_destroy(struct sway_container *con) {
 	wlr_texture_destroy(con->marks_unfocused);
 	wlr_texture_destroy(con->marks_urgent);
 	wlr_texture_destroy(con->marks_focused_tab_title);
+
+	for (int i = 0; i < con->buttons->length; i++) {
+		free(con->buttons->items[i]);
+	}
+	list_free(con->buttons);
 
 	if (con->view && con->view->container == con) {
 		con->view->container = NULL;
@@ -492,6 +512,49 @@ struct sway_output *container_get_effective_output(struct sway_container *con) {
 	}
 	return con->outputs->items[con->outputs->length - 1];
 }
+static void render_titlebar_icon_texture(struct sway_output* output,
+		struct sway_container* con, struct wlr_texture** texture,
+		struct border_colors* class, int width, int height, const char* icon_path)
+{
+	cairo_surface_t *image_surface = cairo_image_surface_create_from_png(icon_path);
+
+	cairo_status_t status = cairo_surface_status(image_surface);
+	if (status != CAIRO_STATUS_SUCCESS) {
+		sway_log(SWAY_ERROR, "cairo_image_surface_create failed: %s",
+			cairo_status_to_string(status));
+		return;
+	}
+
+	cairo_surface_t *surface = cairo_image_surface_create(
+			CAIRO_FORMAT_ARGB32, width, height);
+	status = cairo_surface_status(surface);
+	if (status != CAIRO_STATUS_SUCCESS) {
+		sway_log(SWAY_ERROR, "cairo_image_surface_create failed: %s",
+			cairo_status_to_string(status));
+		cairo_surface_destroy(image_surface);
+		return;
+	}
+
+	// int image_height = cairo_image_surface_get_height(image_surface);
+	// int image_width = cairo_image_surface_get_width(image_surface);
+
+	cairo_t* c = cairo_create(image_surface);
+	// cairo_set_source_rgba(c, class->background[0], class->background[1],
+			// 1.f, class->background[3]);
+	cairo_set_source_surface(c, image_surface, 0, 0);
+	cairo_scale(c, width, height);
+	cairo_paint(c);
+
+	cairo_surface_flush(image_surface);
+	unsigned char *data = cairo_image_surface_get_data(image_surface);
+	int stride = cairo_image_surface_get_stride(image_surface);
+	struct wlr_renderer *renderer = output->wlr_output->renderer;
+	*texture = wlr_texture_from_pixels(
+			renderer, DRM_FORMAT_ARGB8888, stride, width, height, data);
+	cairo_surface_destroy(image_surface);
+	cairo_surface_destroy(surface);
+	cairo_destroy(c);
+}
 
 static void render_titlebar_text_texture(struct sway_output *output,
 		struct sway_container *con, struct wlr_texture **texture,
@@ -667,6 +730,8 @@ void container_update_representation(struct sway_container *con) {
 	} else if (con->pending.workspace) {
 		workspace_update_representation(con->pending.workspace);
 	}
+
+	container_update_buttons_textures(con);
 }
 
 size_t container_titlebar_height(void) {
@@ -1348,6 +1413,7 @@ void container_discover_outputs(struct sway_container *con) {
 	if (old_scale != new_scale) {
 		container_update_title_textures(con);
 		container_update_marks_textures(con);
+		container_update_buttons_textures(con);
 	}
 }
 
@@ -1697,6 +1763,32 @@ void container_update_marks_textures(struct sway_container *con) {
 			&config->border_colors.focused_tab_title);
 	container_damage_whole(con);
 }
+
+void update_buttons_texture(struct sway_container* con, struct border_colors* class, struct sway_container_button* button) {
+	struct sway_output *output = container_get_effective_output(con);
+	if (!output) {
+		return;
+	}
+
+	int height = (config->titlebar_v_padding - config->titlebar_border_thickness) * 2 + config->font_height;
+	int size = roundf(height * config->buttons_scale);
+
+	render_titlebar_icon_texture(output, con, &button->focused_texture, class, size, size, "/home/admin/sway/assets/Sway_Logo+Text_Ver4.png");
+}
+
+void container_update_buttons_textures(struct sway_container* con) {
+	if (!config->show_buttons) {
+		return;
+	}
+
+	for (int i = 0; i < con->buttons->length; i++) {
+		struct sway_container_button* button = (struct sway_container_button* )con->buttons->items[i];
+
+		update_buttons_texture(con, &config->border_colors.focused, 
+			button);
+	}
+	container_damage_whole(con);
+} 
 
 void container_raise_floating(struct sway_container *con) {
 	// Bring container to front by putting it at the end of the floating list.

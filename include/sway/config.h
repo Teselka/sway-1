@@ -531,6 +531,9 @@ struct sway_config {
 	bool reading;
 	bool validating;
 	bool auto_back_and_forth;
+	bool show_buttons;
+	float buttons_scale;
+	int buttons_padding;
 	bool show_marks;
 	enum alignment title_align;
 	bool primary_selection;
